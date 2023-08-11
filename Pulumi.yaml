@@ -1,0 +1,6 @@
+name: compute-instance-creation
+runtime:
+  name: python
+  options:
+    virtualenv: venv
+description: Compute instance for
