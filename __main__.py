@@ -3,6 +3,8 @@
 import requests
 import pulumi
 import pulumi_gcp as gcp
+import socket
+import time
 
 current_ip = requests.get("https://ifconfig.me/ip").text.strip()
 default_compute_sa = gcp.compute.get_default_service_account()
@@ -21,17 +23,15 @@ class SwarmNetwork(pulumi.ComponentResource):
                                                  network=network.id,
                                                  ip_cidr_range="10.0.0.0/24",
                                                  opts=component_opts)
-        docker_firewall = gcp.compute.Firewall(
+        swarm_firewall = gcp.compute.Firewall(
             f"{name}-docker-firewall",
             network=network.self_link,
-            allows=[{
-                'protocol': 'tcp',
-                'ports': ['2376', '2377', '7946']
-            },
-            {
-                'protocol': 'udp',
-                'ports': ['4789', '7946']
-            }],
+            allows=[{'protocol': 'tcp'},
+                    {'protocol': 'icmp'},
+                    {
+                    'protocol': 'udp',
+                    'ports': ['4789', '7946']
+                    }],
             # source_ranges=[f"{instance_subnet.ip_cidr_range}/32"],
             source_ranges=[instance_subnet.ip_cidr_range],
             opts=component_opts
@@ -52,7 +52,7 @@ class SwarmNetwork(pulumi.ComponentResource):
         )
         self.network_id = network.id
         self.instance_subnet_id = instance_subnet.id
-        self.firewall_rules = [docker_firewall.id, ssh_firewall.id, service_firewall.id]
+        self.firewall_rules = [swarm_firewall.id, ssh_firewall.id, service_firewall.id]
 
 
 def get_latest_ubuntu_image(version):
@@ -78,11 +78,18 @@ class SwarmCluster(pulumi.ComponentResource):
                     "image": get_latest_ubuntu_image("20.04")
                 }
             },
-            metadata_startup_script=f"""apt update && apt upgrade -y && apt -y install docker.io && docker swarm init && docker swarm join-token manager -q | gcloud secrets versions add {docker_token_secret_name} --data-file=-""",
+            metadata_startup_script=f"""apt update && apt -y install docker.io && docker swarm init && docker swarm join-token manager -q | gcloud secrets versions add {docker_token_secret_name} --data-file=-""",
             network_interfaces=[{"subnetwork": subnet_id, "access_configs": [{}]}],
             metadata={"ssh-keys": self.ssh_keys_string},
             opts=component_opts
         )
+        self.initial_instance_private_ip: pulumi.Output[str] = initial_instance.network_interfaces[0].network_ip
+
+        # test = pulumi.Output.apply(self._check_manager_running(initial_instance.id))
+        while not self._check_manager_running():
+            pulumi.log.debug("Waiting for initial instance to be ready")
+            time.sleep(10)
+
         instance_template = gcp.compute.InstanceTemplate(
             f"{name}-swarm-node-template",
             name_prefix=f"{name}-swarm-cluster",
@@ -92,8 +99,8 @@ class SwarmCluster(pulumi.ComponentResource):
             disks=[gcp.compute.InstanceTemplateDiskArgs(
                 source_image=get_latest_ubuntu_image("22.04")
             )],
-            metadata_startup_script=initial_instance.network_interfaces[0].network_ip.apply(
-                lambda private_ip: f"""apt update && apt upgrade -y && apt -y install docker.io && docker swarm join --token $(gcloud secrets versions access latest --secret={docker_token_secret_name}) {private_ip}:2377"""),
+            metadata_startup_script=self.initial_instance_private_ip.apply(
+                lambda private_ip: f"""apt update && apt -y install docker.io && docker swarm join --token $(gcloud secrets versions access latest --secret={docker_token_secret_name}) {private_ip}:2377"""),
             network_interfaces=[{"subnetwork": subnet_id, "access_configs": [{}]}],
             metadata={"ssh-keys": self.ssh_keys_string},
             opts=pulumi.ResourceOptions(parent=self, depends_on=initial_instance)
@@ -106,6 +113,18 @@ class SwarmCluster(pulumi.ComponentResource):
                                                           source_instance_template=instance_template.self_link_unique,
                                                           opts=pulumi.ResourceOptions(parent=self))
             self.swarm_nodes.append(swarm_node)
+
+    def _check_manager_running(self) -> pulumi.Output[bool]:
+        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        return self.initial_instance_private_ip.apply(lambda ip: sock.connect_ex((ip, 22)) == 0)
+
+        # result = sock.connect_ex(('127.0.0.1',80))
+        # if result == 0:
+        #     print "Port is open"
+        # else:
+        #     print "Port is not open"
+        # sock.close()
+
 
 
 args = {
