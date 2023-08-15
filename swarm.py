@@ -2,16 +2,15 @@ import pulumi
 import pulumi_gcp as gcp
 import socket
 import time
-from pulumi_tls import PrivateKey
 
 
 class SwarmNetwork(pulumi.ComponentResource):
     def __init__(self, name: str, region: str, ssh_ips: list[str], service_ports: list[str], subnet_cidr_range: str,
                  **kwargs):
-        super().__init__('pkg:swarm:SwarmNetwork', name, None, opts=None)
+        super().__init__('pkg:swarm:SwarmNetwork', f"{name}-network-infrastructure", None, opts=None)
         docker_cidr_range = "172.17.0.0/16"
         component_opts = pulumi.ResourceOptions(parent=self)
-        network = gcp.compute.Network("swarm-network",
+        network = gcp.compute.Network(f"{name}-swarm-network",
                                       auto_create_subnetworks=False,
                                       opts=component_opts)
         instance_subnet = gcp.compute.Subnetwork(f"{name}-instance-subnet",
@@ -64,7 +63,7 @@ def get_latest_ubuntu_image(version):
 class SwarmCluster(pulumi.ComponentResource):
     def __init__(self, name: str, instance_type: str, nodes: int, subnet_id: pulumi.Output[str], region: str,
                  ssh_pub_keys: dict[str, str], compute_sa: str, docker_token_secret_name: str, **kwargs):
-        super().__init__('pkg:swarm:SwarmInstance', name, None, opts=None)
+        super().__init__('pkg:swarm:SwarmCluster', f"{name}-swarm-cluster", None, opts=None)
         component_opts = pulumi.ResourceOptions(parent=self)
         add_docker_users = f'for user in {" ".join(ssh_pub_keys.keys())}; do sudo usermod -a -G docker "$user"; done'
         startup_script = """
