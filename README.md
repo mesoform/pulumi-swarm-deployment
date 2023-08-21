@@ -11,16 +11,22 @@
 This repository defines Pulumi Component Resources for deploying compute instances and initialising a docker swarm.
 
 ## Description
+### SSH Keys
+For automated deployments, an SSH key is generated on the deploying device, and is added to the compute instance.
+This allows the deployer to create a docker context to connect and deploy a stack to the swarm cluster.
+This can be done by adding an ssh context from local machine, i.e. `docker context create test-swarm --docker "host=ssh://deployer@{instance-ip}"`
+
 ### Compute Instances
 The program creates and manages compute instances on GCP. The first instance is initialized as the Docker Swarm manager node. 
 Subsequent instances join the Swarm using a token saved in Google Secret Manager. Each instance:
 
-- Is associated with a specific machine type as defined in the configuration.
-- Has Docker installed and is automatically added to the Docker group.
-- Has SSH keys generated and added, allowing SSH access to the instance.
+- Is within the subnet created by the SwarmNetwork component. The instances are assigned different zones (a, b or c)
+  based on the instance number (e.g. instance 0,3,6 etc. would be zone `a`, 1,4,7 etc. would be `b`, and 2,5,8 etc. would be `c`)
+- Has docker installed and initialises/joins docker swarm node
+- Has generated SSH key added so the deployer can easily interact with the cluster.
 
 ### Network Components
-The deployment provisions several networking components:
+The following network components are created:
 
 - The defined swarm network.
 - A subnet with a specified CIDR range and a secondary range `172.17.0.0/16` for Docker communications.
@@ -28,10 +34,6 @@ The deployment provisions several networking components:
   - **Internal Swarm Communication:** Allows nodes in the Swarm to communicate with each other
   - **SSH Access:** Permits SSH access to the instances
   - **Service Access:** If any services are exposed on the nodes, this rule will ensure they're accessible.
-
-### SSH Keys
-For automated deployments, an SSH key is generated on the deploying device, and is added to the compute instance.
-This allows the deployer to create a docker context to connect and deploy a stack to the swarm cluster.
 
 
 ## How to use module
