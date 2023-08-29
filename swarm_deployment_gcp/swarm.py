@@ -1,11 +1,13 @@
 """Pulumi module to deploy GCP swarm cluster
 """
+import subprocess
 import pulumi
 import pulumi_gcp as gcp
 import socket
 import time
 import os
 import requests
+from pulumi_command import local
 from cryptography.hazmat.primitives import serialization as crypto_serialization
 from cryptography.hazmat.primitives.asymmetric import rsa
 from cryptography.hazmat.backends import default_backend as crypto_default_backend
@@ -31,6 +33,7 @@ class SwarmDeploymentGCPArgs:
         generated_ssh_key_path (str): Storage path for the generated ssh key file.
 
     """
+
     def __init__(self,
                  name: str,
                  docker_token_secret_name: str,
@@ -67,7 +70,7 @@ class SwarmDeploymentGCPArgs:
         self.name = name
         self.docker_token_secret_name = docker_token_secret_name
         self.region = region or "europe-west2"
-        self.subnet_cidr_range = subnet_cidr_range or "10.0.0.0/24"
+        self.subnet_cidr_range = subnet_cidr_range or "10.0.0.0/16"
         self.ssh_pub_keys = ssh_pub_keys or {}
         self.allowed_ips = allowed_ips or []
         if include_current_ip:
@@ -93,17 +96,16 @@ class SwarmDeploymentGCP(pulumi.ComponentResource):
         swarm_network (SwarmNetwork): Network Infrastucture for the swarm cluster
         swarm_cluster (SwarmCluster): Computes instances comprising Docker Swarm cluster
     """
+
     def __init__(self, args: SwarmDeploymentGCPArgs):
         super().__init__('pkg:deployment:ClusterStackDeployment', args.name, None, opts=None)
         # deployment_ssh_key = PrivateKey("deployer", algorithm="RSA", rsa_bits=4096,
         #                                 opts=pulumi.ResourceOptions(
         #                                     additional_secret_outputs=['private_key_openssh', 'private_key_pem']))
         self.args = args
-        pulumi.log.info(f"{vars(self.args)}")
         self.swarm_network = SwarmNetwork(opts=pulumi.ResourceOptions(parent=self), **vars(args))
-        deployer_ssh_key_public = self.create_ssh_keypair()
-        args.ssh_pub_keys['deployer'] = deployer_ssh_key_public
-        pulumi.log.info(f"ssh_keys: {args.ssh_pub_keys}")
+        self.deployer_ssh_key_public = self._create_deployer_ssh_keypair()
+        args.ssh_pub_keys['deployer'] = self.deployer_ssh_key_public
         self.swarm_cluster = SwarmCluster(subnet_id=self.swarm_network.instance_subnet_id,
                                           opts=pulumi.ResourceOptions(parent=self), **vars(args))
         # pulumi.export("ssh_keys", args.ssh_pub_keys)
@@ -111,33 +113,62 @@ class SwarmDeploymentGCP(pulumi.ComponentResource):
             pulumi.export(f"instance-{i}-name", instance.name)
             pulumi.export(f"instance-{i}-external_ip", instance.network_interfaces[0]["access_configs"][0].nat_ip)
 
-    def create_ssh_keypair(self) -> str:
-        """
-        Generate an ssh keypair
+        self.register_outputs({
+            "deployer_ssh_key_public": self.deployer_ssh_key_public,
+            "swarm_cluster": self.swarm_cluster
+        })
 
-        Saves the private key at the location specified by `generate_ssh_key_path`,
-        adds it to the ssh agent using `ssh-add`, and returns the public key.
-
-        :return: Public key of generated SSH key pair
+    def _create_deployer_ssh_keypair(self) -> str:
         """
-        key = rsa.generate_private_key(
-            backend=crypto_default_backend(),
-            public_exponent=65537,  # Standard for RSA, part of public key
-            key_size=4096
-        )
-        private_key = key.private_bytes(
-            crypto_serialization.Encoding.PEM,
-            crypto_serialization.PrivateFormat.PKCS8,
-            crypto_serialization.NoEncryption())
+        If a private key already exists at the location specified by `self.args.generated_ssh_key_path`,
+        it retrieves the corresponding public key. If not, it generates a new key pair.
+
+        It checks if the public key is already present in the ssh-agent. If not, it adds it using `ssh-add`.
+
+        :return: Public key of generated or retrieved SSH key pair
+        """
+        key_path = self.args.generated_ssh_key_path
+
+        if os.path.exists(key_path):
+            pulumi.log.info(f"Deployer private ssh key exists, reading from {key_path}")
+            with open(key_path, 'rb') as f:
+                key = crypto_serialization.load_pem_private_key(
+                    f.read(),
+                    password=None,
+                    backend=crypto_default_backend()
+                )
+        else:
+            pulumi.log.info(f"Generating deployer private ssh key in {key_path}")
+            key = rsa.generate_private_key(
+                backend=crypto_default_backend(),
+                public_exponent=65537,
+                key_size=4096
+            )
+            private_key = key.private_bytes(
+                crypto_serialization.Encoding.PEM,
+                crypto_serialization.PrivateFormat.PKCS8,
+                crypto_serialization.NoEncryption())
+
+            with open(key_path, 'wb') as f:
+                f.write(private_key)
+
+            os.chmod(key_path, 0o600)
+
         public_key = key.public_key().public_bytes(
             crypto_serialization.Encoding.OpenSSH,
             crypto_serialization.PublicFormat.OpenSSH).decode("utf-8")
 
-        with open(self.args.generated_ssh_key_path, 'wb') as f:
-            f.write(private_key)
-        os.chmod(self.args.generated_ssh_key_path, 0o600)
-        os.system(f"ssh-add {self.args.generated_ssh_key_path}")
-        return public_key
+        public_key_with_comment = f"{public_key} deployer"
+
+        # Check if the public key is already in the SSH agent
+        ssh_keys_output = subprocess.getoutput("ssh-add -L")
+        if public_key not in ssh_keys_output:
+            local.Command(
+                "add_ssh_key",
+                create=f"ssh-add {key_path}",
+                update=f"( ssh-add -L | grep -q {public_key}) || ssh-add {key_path}",
+                delete=f"echo '{public_key}' > tmp_public_key && ssh-add -d tmp_public_key && rm tmp_public_key"
+            )
 
 
 class SwarmNetwork(pulumi.ComponentResource):
@@ -147,8 +178,9 @@ class SwarmNetwork(pulumi.ComponentResource):
     Attributes:
         network_id (str): Google VPC network ID
         instance_subnet_id (str): ID of the network's subnet to be used by Compute Instances
-        firewall_rules (list[str]): List of creatd firewall rule IDs
+        firewall_rules (list[str]): List of created firewall rule IDs
     """
+
     def __init__(self, name: str, region: str, allowed_ips: list[str], service_ports: list[str], subnet_cidr_range: str,
                  opts=None, **kwargs):
         """
@@ -228,6 +260,7 @@ class SwarmCluster(pulumi.ComponentResource):
         initial_instance_private_ip (pulumi.Output[str]): Private IP of the initial instance.
         swarm_nodes (list): List of all swarm nodes including the initial instance.
     """
+
     def __init__(self, name: str, machine_type: str, instance_count: int, subnet_id: pulumi.Output[str], region: str,
                  ssh_pub_keys: pulumi.Output[dict[str, str]], compute_sa: str, docker_token_secret_name: str,
                  instance_image_id: str, opts=None, **kwargs):
@@ -248,7 +281,7 @@ class SwarmCluster(pulumi.ComponentResource):
         component_opts = pulumi.ResourceOptions(parent=self)
         add_docker_users = f'for user in {" ".join(ssh_pub_keys.keys())}; do sudo usermod -a -G docker "$user"; done'
         startup_script = """
-apt update && apt -y install docker.io 
+apt-get update && apt-get -y install docker.io 
 {swarm_setup}
 {add_docker_users}
 """
@@ -256,6 +289,7 @@ apt update && apt -y install docker.io
         initial_instance = gcp.compute.Instance(
             f"{name}-swarm-node-0",
             zone=f"{region}-a",
+            allow_stopping_for_update=True,
             service_account=gcp.compute.InstanceServiceAccountArgs(email=compute_sa, scopes=["cloud-platform"]),
             machine_type=machine_type,
             boot_disk={
@@ -264,7 +298,7 @@ apt update && apt -y install docker.io
                 }
             },
             metadata_startup_script=startup_script.format(
-                swarm_setup=f"docker swarm init && docker swarm join-token manager -q | gcloud secrets versions add {docker_token_secret_name} --data-file=-",
+                swarm_setup=f"docker swarm init --default-addr-pool-mask-length 16 && docker swarm join-token manager -q | gcloud secrets versions add {docker_token_secret_name} --data-file=-",
                 add_docker_users=add_docker_users),
             network_interfaces=[{"subnetwork": subnet_id, "access_configs": [{}]}],
             metadata={"ssh-keys": self.ssh_keys_string},
@@ -272,11 +306,11 @@ apt update && apt -y install docker.io
         )
         self.initial_instance_private_ip: pulumi.Output[str] = initial_instance.network_interfaces[0].network_ip
         retry = 0
-        while retry < 30 and not self._check_manager_running() :
-            pulumi.log.debug("Waiting for initial instance to be ready")
+        while retry < 30 and not self._check_manager_running():
+            pulumi.log.info("Waiting for initial instance to be ready")
             time.sleep(10)
             retry += 1
-
+        pulumi.log.info("Initial instance is ready to accept connections")
         instance_template = gcp.compute.InstanceTemplate(
             f"{name}-swarm-node-template",
             name_prefix=f"{name}-swarm-node",
@@ -298,10 +332,10 @@ apt update && apt -y install docker.io
         self.swarm_nodes = [initial_instance]
         zones = ["a", "b", "c"]
         for i in range(1, instance_count):
-
             swarm_node = gcp.compute.InstanceFromTemplate(f"{name}-swarm-node-{i}",
                                                           zone=f"{region}-{zones[i % len(zones)]}",
                                                           source_instance_template=instance_template.self_link_unique,
+                                                          allow_stopping_for_update=True,
                                                           opts=pulumi.ResourceOptions(parent=self))
             self.swarm_nodes.append(swarm_node)
         self.register_outputs({
