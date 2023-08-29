@@ -118,7 +118,7 @@ class SwarmDeploymentGCP(pulumi.ComponentResource):
             "swarm_cluster": self.swarm_cluster
         })
 
-    def _create_deployer_ssh_keypair(self) -> str:
+    def _create_deployer_ssh_keypair(self):
         """
         If a private key already exists at the location specified by `self.args.generated_ssh_key_path`,
         it retrieves the corresponding public key. If not, it generates a new key pair.
