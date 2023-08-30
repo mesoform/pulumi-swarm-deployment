@@ -31,8 +31,9 @@ The following network components are created:
 - The defined swarm network.
 - A subnet with a specified CIDR range and a secondary range `172.17.0.0/16` for Docker communications.
 - Firewall rules:
-  - **Internal Swarm Communication:** Allows nodes in the Swarm to communicate with each other
-  - **SSH Access:** Permits SSH access to the instances
+  - **Internal Swarm Communication:** Allows nodes in the Swarm to communicate with each other, accepting all tcp, udp, 
+    icmp and esp connections between instances. 
+  - **SSH Access:** Permits SSH access to the instances for specified IPs
   - **Service Access:** If any services are exposed on the nodes, this rule will ensure they're accessible.
 
 

@@ -212,11 +212,9 @@ class SwarmNetwork(pulumi.ComponentResource):
             f"{name}-swarm-internal-firewall",
             network=network.self_link,
             allows=[{'protocol': 'tcp'},
+                    {'protocol': 'esp'},
                     {'protocol': 'icmp'},
-                    {
-                        'protocol': 'udp',
-                        'ports': ['4789', '7946']
-                    }],
+                    {'protocol': 'udp'}],
             source_ranges=[subnet_cidr_range, docker_cidr_range],
             opts=component_opts
         )
