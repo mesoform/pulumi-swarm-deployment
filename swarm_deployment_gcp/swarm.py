@@ -198,6 +198,7 @@ class SwarmNetwork(pulumi.ComponentResource):
         component_opts = pulumi.ResourceOptions(parent=self)
         network = gcp.compute.Network(f"{name}-swarm-network",
                                       auto_create_subnetworks=False,
+                                      mtu=1500,
                                       opts=component_opts)
         instance_subnet = gcp.compute.Subnetwork(f"{name}-instance-subnet",
                                                  region=region,
