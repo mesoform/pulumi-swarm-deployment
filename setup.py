@@ -10,6 +10,7 @@ setup(
     install_requires=[
         'pulumi',
         'pulumi-gcp',
+        'pulumi_command',
         'requests',
         'cryptography'
     ],
