@@ -1,0 +1,6 @@
+name: swarm-deployment-gcp
+runtime:
+  name: python
+  options:
+    virtualenv: venv
+description: Deploys compute instances and initialises a swarm cluster
