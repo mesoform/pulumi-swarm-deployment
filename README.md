@@ -39,6 +39,9 @@ The following network components are created:
 
 ## How to use module
 
+This module can be used by either importing the module into a pulumi program, 
+or by cloning and using this repository directly.
+
 ### Import module
 
 1. Create a pulumi program
@@ -50,6 +53,33 @@ The following network components are created:
 2. Navigate to the directory containing the Pulumi program.
 3. Modify the configuration for the stack
 4. Run `pulumi up`. Review the proposed changes and confirm the deployment.
+
+### Configuration
+Both importing and cloning methods require configuration of `pulumi.<stack-name>.yml`.
+The values can either be configured by setting up the file directly or using the `pulumi config` command.
+
+The required values to be set are:
+*  `gcp:project`: The Google project where the resources will be deployed
+*  `<pulumi-program-name>:docker_token_secret_name`: The name that the secret holding the docker token should have
+*  `<pulumi-program-name>:name`: Name for the cluster, i.e. the prefix for all resources deployed 
+
+Note `pulumi-program-name` refers to the `name` value in `Pulumi.yaml`, so if cloning this repo that would be "swarm-deployment-gcp".  
+
+Remaining configuration values are:
+*  `region`: Deployment region for resources (default: `"europe-west2"`)
+*  `subnet_cidr_range`: CIDR range for subnet (default: `"10.0.0.0/16"`)
+*  `ssh_pub_keys`:SSH keys to add to instances with format 'username: public-ssh-key' (default: Map containing generated "deployer" ssh key)
+*  `include_current_ip`: Whether to include the current deployers IP in allowed_ips (default: `false`)
+*  `allowed_ips`: IPs with SSH access to instances and access to docker service ports 
+(default: Empty list, unless `include_current_ip` is true, where the list will contain the IP of the deployer)
+*  `compute_sa`: Service account used by the compute instances. Note this service account must have access to docker token secret
+(default: uses default compute service account)
+*  `service_ports`: Docker service ports accessible by specified ips (default: `[]`)
+*  `machine_type`: Compute instance machine type, (default: `"e2-micro"`)
+*  `instance_image_id`: Compute instance image id, with the format `"{project}/{image}"`, or `"{project}/{family}"` 
+(default: `"ubuntu-os-cloud/ubuntu-2204-lts"`)
+*  `instance_count`: Number of compute instances to have in the swarm (default: `3`)
+*  `generated_ssh_key_path`: Storage path for the generated ssh private key file (default `"./deployer_ssh_key"`)
 
 
 ## Examples
@@ -98,6 +128,11 @@ Previewing update (dev):
  +      ├─ gcp:compute:InstanceFromTemplate  test-swarm-node-1             create     
  +      └─ gcp:compute:InstanceFromTemplate  test-swarm-node-2             create     
 ```
+
+## Cleanup
+To destroy all resource in the stack run `pulumi down`.
+The "deployer" ssh key might still remain in your ssh agent afterward and may need removing.  
+
 
 # ABOUT US
 Mesoform is a specialist software engineering company and are experts in DevOps, SRE and Platform Engineering spaces.

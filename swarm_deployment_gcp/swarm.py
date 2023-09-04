@@ -61,7 +61,7 @@ class SwarmDeploymentGCPArgs:
             Uses default compute service account by default
         :param service_ports: Docker service ports accessible by specified ips
         :param machine_type: Compute instance machine type, defaults to "e2-micro"
-        :param instance_image_id: Compute instance image id, with the format {project}/{family}, or {project}/{family}.
+        :param instance_image_id: Compute instance image id, with the format {project}/{image}, or {project}/{family}.
             Defaults to ubuntu-os-cloud/ubuntu-2204-lts
         :param instance_count: Number of compute instances to have in the swarm
         :param generated_ssh_key_path: Storage path for the generated ssh key file.
