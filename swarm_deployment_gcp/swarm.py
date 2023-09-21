@@ -66,7 +66,6 @@ class SwarmDeploymentGCPArgs:
         :param instance_count: Number of compute instances to have in the swarm
         :param generated_ssh_key_path: Storage path for the generated ssh key file.
         """
-        default_compute_sa = gcp.compute.get_default_service_account().email
         self.name = name
         self.docker_token_secret_name = docker_token_secret_name
         self.region = region or "europe-west2"
@@ -76,7 +75,7 @@ class SwarmDeploymentGCPArgs:
         if include_current_ip:
             current_ip = requests.get("https://ifconfig.me/ip").text.strip()
             self.allowed_ips = self.allowed_ips + [current_ip]
-        self.compute_sa = compute_sa or default_compute_sa
+        self.compute_sa = compute_sa or gcp.compute.get_default_service_account().email
         self.service_ports = service_ports or []
         self.machine_type = machine_type or "e2-micro"
         self.instance_image_id = instance_image_id or "ubuntu-os-cloud/ubuntu-2204-lts"
