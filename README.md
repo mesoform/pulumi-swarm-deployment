@@ -42,6 +42,17 @@ The following network components are created:
 This module can be used by either importing the module into a pulumi program, 
 or by cloning and using this repository directly.
 
+### Prerequisites
+To use this module the following prerequisites must be met:
+* Python version 3.10+ installed
+* Pulumi version 3+
+* Google APIs enabled:
+  * Compute Engine
+  * Secret Manager
+* Service account to be used by compute instances (set by `compute_sa`), with `roles/secretmanager.admin` 
+to create and access the secrets for swarm initialisation
+
+
 ### Import module
 
 1. Create a pulumi program
@@ -69,7 +80,7 @@ Remaining configuration values are:
 *  `region`: Deployment region for resources (default: `"europe-west2"`)
 *  `subnet_cidr_range`: CIDR range for subnet (default: `"10.0.0.0/16"`)
 *  `ssh_pub_keys`:SSH keys to add to instances with format 'username: public-ssh-key' (default: Map containing generated "deployer" ssh key)
-*  `include_current_ip`: Whether to include the current deployers IP in allowed_ips (default: `false`)
+*  `include_current_ip`: Whether to include the current deployers IP in `allowed_ips` for ssh access to instances (default: true)
 *  `allowed_ips`: IPs with SSH access to instances and access to docker service ports 
 (default: Empty list, unless `include_current_ip` is true, where the list will contain the IP of the deployer)
 *  `compute_sa`: Service account used by the compute instances. Note this service account must have access to docker token secret
@@ -79,6 +90,7 @@ Remaining configuration values are:
 *  `instance_image_id`: Compute instance image id, with the format `"{project}/{image}"`, or `"{project}/{family}"` 
 (default: `"ubuntu-os-cloud/ubuntu-2204-lts"`)
 *  `instance_count`: Number of compute instances to have in the swarm (default: `3`)
+*  `generate_ssh_key`: Whether to generate `deployer` ssh key to allow access to instance (default `false`)
 *  `generated_ssh_key_path`: Storage path for the generated ssh private key file (default `"./deployer_ssh_key"`)
 
 

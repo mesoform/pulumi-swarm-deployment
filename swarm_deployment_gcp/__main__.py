@@ -21,6 +21,7 @@ def main():
         "machine_type": config.get("machine_type"),
         "instance_image_id": config.get("instance_image_id"),
         "instance_count": config.get_int("instance_count"),
+        "generate_ssh_key": config.get("generate_ssh_key"),
         "generated_ssh_key_path": config.get("generated_ssh_key_path")
     }
     swarm_deployment = SwarmDeploymentGCP(SwarmDeploymentGCPArgs(**config_args))
