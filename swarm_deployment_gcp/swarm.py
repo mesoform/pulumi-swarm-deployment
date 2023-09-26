@@ -55,7 +55,7 @@ class SwarmDeploymentGCPArgs:
         :param region: Deployment region for resources
         :param subnet_cidr_range: CIDR range for subnet
         :param ssh_pub_keys:SSH keys to add to instances with format 'username: public-ssh-key'.
-        :param include_current_ip: Whether to include the current deployers IP in allowed_ips
+        :param include_current_ip: Whether to include the current deployers IP in allowed_ips (default to true)
         :param allowed_ips: IPs with SSH access to instances and access to docker service ports
         :param compute_sa: Service account used by the compute instances (must have access to docker token secret).
             Uses default compute service account by default
@@ -72,7 +72,8 @@ class SwarmDeploymentGCPArgs:
         self.subnet_cidr_range = subnet_cidr_range or "10.0.0.0/16"
         self.ssh_pub_keys = ssh_pub_keys or {}
         self.allowed_ips = allowed_ips or []
-        if include_current_ip:
+
+        if include_current_ip or include_current_ip is None:
             current_ip = requests.get("https://ifconfig.me/ip").text.strip()
             self.allowed_ips = self.allowed_ips + [current_ip]
         self.compute_sa = compute_sa or gcp.compute.get_default_service_account().email
@@ -297,7 +298,14 @@ apt-get update && apt-get -y install docker.io
                 }
             },
             metadata_startup_script=startup_script.format(
-                swarm_setup=f"docker swarm init --default-addr-pool-mask-length 16 && docker swarm join-token manager -q | gcloud secrets versions add {docker_token_secret_name} --data-file=-",
+                swarm_setup=f"""
+gcloud secrets describe {docker_token_secret_name} > /dev/null 2>&1
+GCLOUD_COMMAND="gcloud secrets versions add"
+if [ $? -ne 0 ]; then
+  GCLOUD_COMMAND="gcloud secrets create"
+fi
+docker swarm init --default-addr-pool-mask-length 16 && docker swarm join-token manager -q | $GCLOUD_COMMAND {docker_token_secret_name} --data-file=-
+""",
                 add_docker_users=add_docker_users),
             network_interfaces=[{"subnetwork": subnet_id, "access_configs": [{}]}],
             metadata={"ssh-keys": self.ssh_keys_string},
