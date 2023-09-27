@@ -11,6 +11,7 @@ def main():
     config_args = {
         "name": config.require("name"),
         "docker_token_secret_name": config.require("docker_token_secret_name"),
+        "docker_token_secret_user_managed": config.get_bool("docker_token_secret_user_managed"),
         "region": config.get("region"),
         "subnet_cidr_range": config.get("subnet_cidr_range"),
         "ssh_pub_keys": config.get_object("ssh_pub_keys"),

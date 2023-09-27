@@ -19,6 +19,7 @@ class SwarmDeploymentGCPArgs:
     Attributes:
         name (str): Name of the target application the cluster deployment is for
         docker_token_secret_name (str): Secret name in Google Secret Manager for swarm manager token storage
+        docker_token_secret_user_managed (bool): Whether the secret storing the docker token should be user managed
         region (str): Deployment region for resources
         subnet_cidr_range (str): CIDR range for subnet
         ssh_pub_keys (dict[str, str]) :SSH keys to add to instances with format 'username: public-ssh-key'.
@@ -38,22 +39,24 @@ class SwarmDeploymentGCPArgs:
     def __init__(self,
                  name: str,
                  docker_token_secret_name: str,
-                 region: str,
-                 subnet_cidr_range: str,
-                 ssh_pub_keys: dict[str, str],
-                 include_current_ip: bool,
-                 generate_ssh_key: bool,
-                 allowed_ips: list[str],
-                 compute_sa: str,
-                 service_ports: list[str],
-                 machine_type: str,
-                 instance_image_id: str,
-                 instance_count: int,
-                 generated_ssh_key_path: str):
+                 docker_token_secret_user_managed: bool = False,
+                 region: str = None,
+                 subnet_cidr_range: str = None,
+                 ssh_pub_keys: dict[str, str] = None,
+                 include_current_ip: bool = True,
+                 generate_ssh_key: bool = False,
+                 allowed_ips: list[str] = None,
+                 compute_sa: str = None,
+                 service_ports: list[str] = None,
+                 machine_type: str = None,
+                 instance_image_id: str = None,
+                 instance_count: int = None,
+                 generated_ssh_key_path: str = None):
         """
 
         :param name: Prefix for deployed resources
         :param docker_token_secret_name: Secret name in Google Secret Manager for swarm manager token storage
+        :param docker_token_secret_user_managed: Whether the ssecret for storing the docker join token should be use managed
         :param region: Deployment region for resources
         :param subnet_cidr_range: CIDR range for subnet
         :param ssh_pub_keys:SSH keys to add to instances with format 'username: public-ssh-key'.
@@ -71,12 +74,12 @@ class SwarmDeploymentGCPArgs:
         """
         self.name = name
         self.docker_token_secret_name = docker_token_secret_name
+        self.docker_token_secret_user_managed = docker_token_secret_user_managed
         self.region = region or "europe-west2"
         self.subnet_cidr_range = subnet_cidr_range or "10.0.0.0/16"
         self.ssh_pub_keys = ssh_pub_keys or {}
         self.allowed_ips = allowed_ips or []
-
-        if include_current_ip or include_current_ip is None:
+        if include_current_ip:
             current_ip = requests.get("https://ifconfig.me/ip").text.strip()
             self.allowed_ips = self.allowed_ips + [current_ip]
         self.compute_sa = compute_sa or gcp.compute.get_default_service_account().email
@@ -84,7 +87,7 @@ class SwarmDeploymentGCPArgs:
         self.machine_type = machine_type or "e2-micro"
         self.instance_image_id = instance_image_id or "ubuntu-os-cloud/ubuntu-2204-lts"
         self.instance_count = instance_count or 3
-        self.generate_ssh_key = generate_ssh_key or False
+        self.generate_ssh_key = generate_ssh_key
         self.generated_ssh_key_path = generated_ssh_key_path or "./deployer_ssh_key"
 
 
@@ -268,7 +271,7 @@ class SwarmCluster(pulumi.ComponentResource):
 
     def __init__(self, name: str, machine_type: str, instance_count: int, subnet_id: pulumi.Output[str], region: str,
                  ssh_pub_keys: pulumi.Output[dict[str, str]], compute_sa: str, docker_token_secret_name: str,
-                 instance_image_id: str, opts=None, **kwargs):
+                 docker_token_secret_user_managed: bool, instance_image_id: str, opts=None, **kwargs):
         """
 
         :param name: Name prefix for the resources
@@ -291,6 +294,7 @@ apt-get update && apt-get -y install docker.io
 {add_docker_users}
 """
         self.ssh_keys_string = "\n".join([username + ":" + pub_key for username, pub_key in ssh_pub_keys.items()])
+        secret_location = f"--replication-policy=user-managed --locations={region}" if docker_token_secret_user_managed else ""
         initial_instance = gcp.compute.Instance(
             f"{name}-swarm-node-0",
             zone=f"{region}-a",
@@ -307,7 +311,7 @@ apt-get update && apt-get -y install docker.io
 GCLOUD_COMMAND="gcloud secrets versions add"
 gcloud secrets describe {docker_token_secret_name} > /dev/null 2>&1
 if [ $? -ne 0 ]; then
-  GCLOUD_COMMAND="gcloud secrets create"
+  GCLOUD_COMMAND="gcloud secrets create {secret_location}"
 fi
 docker swarm init --default-addr-pool-mask-length 16 && docker swarm join-token manager -q | $GCLOUD_COMMAND {docker_token_secret_name} --data-file=-
 """,
