@@ -19,6 +19,7 @@ class SwarmDeploymentGCPArgs:
     Attributes:
         name (str): Name of the target application the cluster deployment is for
         docker_token_secret_name (str): Secret name in Google Secret Manager for swarm manager token storage
+        docker_token_secret_user_managed (bool): Whether the secret storing the docker token should be user managed
         region (str): Deployment region for resources
         subnet_cidr_range (str): CIDR range for subnet
         ssh_pub_keys (dict[str, str]) :SSH keys to add to instances with format 'username: public-ssh-key'.
@@ -30,6 +31,7 @@ class SwarmDeploymentGCPArgs:
         instance_image_id (str): Compute instance image id, with the format {project}/{family}, or {project}/{family}.
             Defaults to ubuntu-os-cloud/ubuntu-2204-lts
         instance_count (int): Number of compute instances to have in the swarm
+        generate_ssh_key (bool): Whether to generate deployer ssh keys for connecting to the instance
         generated_ssh_key_path (str): Storage path for the generated ssh key file.
 
     """
@@ -37,25 +39,29 @@ class SwarmDeploymentGCPArgs:
     def __init__(self,
                  name: str,
                  docker_token_secret_name: str,
-                 region: str,
-                 subnet_cidr_range: str,
-                 ssh_pub_keys: dict[str, str],
-                 include_current_ip: bool,
-                 allowed_ips: list[str],
-                 compute_sa: str,
-                 service_ports: list[str],
-                 machine_type: str,
-                 instance_image_id: str,
-                 instance_count: int,
-                 generated_ssh_key_path: str):
+                 docker_token_secret_user_managed: bool = False,
+                 region: str = None,
+                 subnet_cidr_range: str = None,
+                 ssh_pub_keys: dict[str, str] = None,
+                 include_current_ip: bool = True,
+                 generate_ssh_key: bool = False,
+                 allowed_ips: list[str] = None,
+                 compute_sa: str = None,
+                 service_ports: list[str] = None,
+                 machine_type: str = None,
+                 instance_image_id: str = None,
+                 instance_count: int = None,
+                 generated_ssh_key_path: str = None):
         """
 
         :param name: Prefix for deployed resources
         :param docker_token_secret_name: Secret name in Google Secret Manager for swarm manager token storage
+        :param docker_token_secret_user_managed: Whether the ssecret for storing the docker join token should be use managed
         :param region: Deployment region for resources
         :param subnet_cidr_range: CIDR range for subnet
         :param ssh_pub_keys:SSH keys to add to instances with format 'username: public-ssh-key'.
-        :param include_current_ip: Whether to include the current deployers IP in allowed_ips
+        :param include_current_ip: Whether to include the current deployers IP in allowed_ips (default to true)
+        :param generate_ssh_key: Whether to generate deployer ssh keys for connecting to the instance (default to false)
         :param allowed_ips: IPs with SSH access to instances and access to docker service ports
         :param compute_sa: Service account used by the compute instances (must have access to docker token secret).
             Uses default compute service account by default
@@ -68,6 +74,7 @@ class SwarmDeploymentGCPArgs:
         """
         self.name = name
         self.docker_token_secret_name = docker_token_secret_name
+        self.docker_token_secret_user_managed = docker_token_secret_user_managed
         self.region = region or "europe-west2"
         self.subnet_cidr_range = subnet_cidr_range or "10.0.0.0/16"
         self.ssh_pub_keys = ssh_pub_keys or {}
@@ -80,6 +87,7 @@ class SwarmDeploymentGCPArgs:
         self.machine_type = machine_type or "e2-micro"
         self.instance_image_id = instance_image_id or "ubuntu-os-cloud/ubuntu-2204-lts"
         self.instance_count = instance_count or 3
+        self.generate_ssh_key = generate_ssh_key
         self.generated_ssh_key_path = generated_ssh_key_path or "./deployer_ssh_key"
 
 
@@ -92,7 +100,7 @@ class SwarmDeploymentGCP(pulumi.ComponentResource):
 
     Attributes:
         args (SwarmDeploymentGCPArgs): Configuration arguments
-        swarm_network (SwarmNetwork): Network Infrastucture for the swarm cluster
+        swarm_network (SwarmNetwork): Network Infrastructure for the swarm cluster
         swarm_cluster (SwarmCluster): Computes instances comprising Docker Swarm cluster
     """
 
@@ -103,8 +111,9 @@ class SwarmDeploymentGCP(pulumi.ComponentResource):
         #                                     additional_secret_outputs=['private_key_openssh', 'private_key_pem']))
         self.args = args
         self.swarm_network = SwarmNetwork(opts=pulumi.ResourceOptions(parent=self), **vars(args))
-        self.deployer_ssh_key_public = self._create_deployer_ssh_keypair()
-        args.ssh_pub_keys['deployer'] = self.deployer_ssh_key_public
+        if args.generate_ssh_key:
+            self.deployer_ssh_key_public = self._create_deployer_ssh_keypair()
+            args.ssh_pub_keys['deployer'] = self.deployer_ssh_key_public
         self.swarm_cluster = SwarmCluster(subnet_id=self.swarm_network.instance_subnet_id,
                                           opts=pulumi.ResourceOptions(parent=self), **vars(args))
         # pulumi.export("ssh_keys", args.ssh_pub_keys)
@@ -113,7 +122,7 @@ class SwarmDeploymentGCP(pulumi.ComponentResource):
             pulumi.export(f"instance-{i}-external_ip", instance.network_interfaces[0]["access_configs"][0].nat_ip)
 
         self.register_outputs({
-            "deployer_ssh_key_public": self.deployer_ssh_key_public,
+            "deployer_ssh_key_public": getattr(self, "deployer_ssh_key_public", None),
             "swarm_cluster": self.swarm_cluster
         })
 
@@ -262,7 +271,7 @@ class SwarmCluster(pulumi.ComponentResource):
 
     def __init__(self, name: str, machine_type: str, instance_count: int, subnet_id: pulumi.Output[str], region: str,
                  ssh_pub_keys: pulumi.Output[dict[str, str]], compute_sa: str, docker_token_secret_name: str,
-                 instance_image_id: str, opts=None, **kwargs):
+                 docker_token_secret_user_managed: bool, instance_image_id: str, opts=None, **kwargs):
         """
 
         :param name: Name prefix for the resources
@@ -285,6 +294,7 @@ apt-get update && apt-get -y install docker.io
 {add_docker_users}
 """
         self.ssh_keys_string = "\n".join([username + ":" + pub_key for username, pub_key in ssh_pub_keys.items()])
+        secret_location = f"--replication-policy=user-managed --locations={region}" if docker_token_secret_user_managed else ""
         initial_instance = gcp.compute.Instance(
             f"{name}-swarm-node-0",
             zone=f"{region}-a",
@@ -297,7 +307,14 @@ apt-get update && apt-get -y install docker.io
                 }
             },
             metadata_startup_script=startup_script.format(
-                swarm_setup=f"docker swarm init --default-addr-pool-mask-length 16 && docker swarm join-token manager -q | gcloud secrets versions add {docker_token_secret_name} --data-file=-",
+                swarm_setup=f"""
+GCLOUD_COMMAND="gcloud secrets versions add"
+gcloud secrets describe {docker_token_secret_name} > /dev/null 2>&1
+if [ $? -ne 0 ]; then
+  GCLOUD_COMMAND="gcloud secrets create {secret_location}"
+fi
+docker swarm init --default-addr-pool-mask-length 16 && docker swarm join-token manager -q | $GCLOUD_COMMAND {docker_token_secret_name} --data-file=-
+""",
                 add_docker_users=add_docker_users),
             network_interfaces=[{"subnetwork": subnet_id, "access_configs": [{}]}],
             metadata={"ssh-keys": self.ssh_keys_string},
