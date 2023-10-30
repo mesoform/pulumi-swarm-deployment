@@ -289,7 +289,8 @@ class SwarmCluster(pulumi.ComponentResource):
         component_opts = pulumi.ResourceOptions(parent=self)
         add_docker_users = f'for user in {" ".join(ssh_pub_keys.keys())}; do sudo usermod -a -G docker "$user"; done'
         startup_script = """
-apt-get update && apt-get -y install docker.io 
+apt-get update && apt-get -y install docker.io
+sudo sysctl -w vm.max_map_count=262144
 {swarm_setup}
 {add_docker_users}
 """
@@ -339,7 +340,10 @@ docker swarm init --default-addr-pool-mask-length 16 && docker swarm join-token 
             metadata_startup_script=self.initial_instance_private_ip.apply(
                 lambda
                     private_ip: startup_script.format(
-                    swarm_setup=f"apt update && apt -y install docker.io && docker swarm join --token $(gcloud secrets versions access latest --secret={docker_token_secret_name}) {private_ip}:2377",
+                    swarm_setup=f"""
+apt update && apt -y install docker.io && sudo sysctl -w vm.max_map_count=262144 &&
+docker swarm join --token $(gcloud secrets versions access latest --secret={docker_token_secret_name}) {private_ip}:2377
+""",
                     add_docker_users=add_docker_users)),
             network_interfaces=[{"subnetwork": subnet_id, "access_configs": [{}]}],
             metadata={"ssh-keys": self.ssh_keys_string},
